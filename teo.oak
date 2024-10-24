@@ -174,32 +174,98 @@ fn pattern_match(pattern Expr, value Expr, bindings *Bindings) bool {
    return false
 }
 
+alias Action int
+const (
+   ACTION_SKIP
+   ACTION_APPLY
+)
+
+alias State int
+const (
+   STATE_BAIL
+   STATE_CONT
+   STATE_HALT
+)
+
+struct Resolution {
+   action Action
+   state State
+}
+
+alias Strategy int
+const (
+   STRATEGY_APPLY_ALL
+   STRATEGY_APPLY_FIRST
+)
+
+fn strategy_matched(strategy Strategy) Resolution {
+   let resolution Resolution
+   match strategy {
+      STRATEGY_APPLY_ALL => {
+         resolution.action = ACTION_APPLY
+         resolution.state = STATE_BAIL
+      }
+      STRATEGY_APPLY_FIRST => {
+         resolution.action = ACTION_APPLY
+         resolution.state = STATE_HALT
+      }
+   }
+   return resolution
+}
+
 struct Rule {
    head Expr
    body Expr
 }
 
 assert COUNT_EXPRS == 3
-fn rule_apply_all(rule Rule, expr Expr) Expr {
+fn rule_apply(rule Rule, expr Expr, strategy Strategy, halt *bool) Expr {
    let bindings Bindings
    bindings.data = 0 as *Binding
    bindings.count = 0
    bindings.capacity = 0
 
-   if !pattern_match(rule.head, expr, &bindings) {
+   if pattern_match(rule.head, expr, &bindings) {
+      let resolution = strategy_matched(strategy)
+      let new_expr Expr
+      match resolution.action {
+         ACTION_APPLY => new_expr = bindings_substitute(&bindings, rule.body)
+         ACTION_SKIP => new_expr = expr
+      }
+      match resolution.state {
+         STATE_BAIL => {
+            *halt = false
+            return new_expr
+         }
+         STATE_CONT => return rule_apply(rule, new_expr, strategy, halt)
+         STATE_HALT => {
+            *halt = true
+            return new_expr
+         }
+      }
+   } else {
       match expr.kind {
-         EXPR_SYM, EXPR_VAR => return expr
+         EXPR_SYM, EXPR_VAR => {
+            *halt = false
+            return expr
+         }
          EXPR_FUN => {
             let new_fun = expr_fun(expr.name)
+            let halt_args = false
             for let i = 0, i < expr.args_count, i += 1 {
-               &new_fun << rule_apply_all(rule, (expr.args as *Expr)[i])
+               if halt_args {
+                  &new_fun << expr.args[i]
+               } else {
+                  &new_fun << rule_apply(rule, (expr.args as *Expr)[i], strategy, &halt_args)
+               }
             }
+            *halt = false
             return new_fun
          }
       }
    }
-
-   return bindings_substitute(&bindings, rule.body)
+   assert false
+   let expr Expr return expr
 }
 
 fn [<<](file *File, rule Rule) *File {
@@ -210,7 +276,7 @@ fn [<<](file *File, rule Rule) *File {
 assert COUNT_EXPRS == 3
 fn parse_expr(result *Expr) bool {
    let name Token
-   if !lexer_expect(TOKEN_SYMBOL, &name) { return false }
+   if !lexer_expect(TOKEN_IDENT, &name) { return false }
    let peek_row bool
    if !lexer_peek_row(&lexer.buffer, &peek_row) { return false }
    if peek_row && lexer.buffer.kind == TOKEN_LPAREN {
@@ -314,7 +380,7 @@ fn context_process_command(context *Context) bool {
    match token.kind {
       TOKEN_RULE => {
          let name Token
-         if !lexer_expect(TOKEN_SYMBOL, &name) { return false }
+         if !lexer_expect(TOKEN_IDENT, &name) { return false }
          let existing_rule Rule
          if context_rules_find(context, name.str, &existing_rule) {
             &stderr << name.pos << "error: redefinition of existing rule '" << name.str << "'\n"
@@ -347,10 +413,21 @@ fn context_process_command(context *Context) bool {
             return false
          }
          let token Token
-         if !lexer_either(TOKEN_SYMBOL, TOKEN_RULE, &token) { return false }
+         if !lexer_peek(&token) { return false }
+         let strategy = -1
+         match token.kind {
+            TOKEN_ALL => strategy = STRATEGY_APPLY_ALL
+            TOKEN_FIRST => strategy = STRATEGY_APPLY_FIRST
+         }
+         if strategy >= 0 {
+            if !lexer_next(&token) { return false }
+         } else {
+            strategy = STRATEGY_APPLY_ALL
+         }
+         if !lexer_either(TOKEN_IDENT, TOKEN_RULE, &token) { return false }
          let rule Rule
          match token.kind {
-            TOKEN_SYMBOL => {
+            TOKEN_IDENT => {
                if !context_rules_find(context, token.str, &rule) {
                   &stderr << "error: rule '" << token.str << "' does not exist\n"
                   return false
@@ -361,7 +438,9 @@ fn context_process_command(context *Context) bool {
             }
          }
          *(array_push(&context.shaping_history as **char, &context.shaping_history_count, &context.shaping_history_capacity, sizeof(Expr)) as *Expr) = context.curr_expr
-         let new_expr = rule_apply_all(rule, context.curr_expr)
+         let new_expr Expr
+         let halt bool
+         new_expr = rule_apply(rule, context.curr_expr, strategy, &halt)
          &stdout << " => " << new_expr << "\n"
          context.curr_expr = new_expr
       }

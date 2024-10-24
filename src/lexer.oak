@@ -22,7 +22,7 @@ fn [<<](f *File, pos Pos) *File {
 alias Token_Kind int
 const (
    TOKEN_EOF
-   TOKEN_SYMBOL
+   TOKEN_IDENT
    TOKEN_COMMA
    TOKEN_LPAREN
    TOKEN_RPAREN
@@ -33,14 +33,16 @@ const (
    TOKEN_DONE
    TOKEN_UNDO
    TOKEN_QUIT
+   TOKEN_ALL
+   TOKEN_FIRST
    COUNT_TOKENS
 )
 
-assert COUNT_TOKENS == 12
+assert COUNT_TOKENS == 14
 fn str_from_token_kind(kind Token_Kind) Str {
    match kind {
       TOKEN_EOF => return "end of file"
-      TOKEN_SYMBOL => return "symbol"
+      TOKEN_IDENT => return "identifier"
       TOKEN_COMMA => return "','"
       TOKEN_LPAREN => return "'('"
       TOKEN_RPAREN => return "')'"
@@ -51,6 +53,8 @@ fn str_from_token_kind(kind Token_Kind) Str {
       TOKEN_DONE => return "command 'done'"
       TOKEN_UNDO => return "command 'undo'"
       TOKEN_QUIT => return "command 'quit'"
+      TOKEN_ALL => return "strategy 'all'"
+      TOKEN_FIRST => return "strategy 'first'"
       else => assert false
    }
    return ""
@@ -133,7 +137,7 @@ fn error_invalid(name Str) {
    &stderr << lexer.pos << "error: invalid " << name << " '" << lexer.str.data[-1] << "'\n"
 }
 
-assert COUNT_TOKENS == 12
+assert COUNT_TOKENS == 14
 fn lexer_next(result *Token) bool {
    if lexer.peeked {
       lexer.peeked = false
@@ -189,8 +193,12 @@ fn lexer_next(result *Token) bool {
          token.kind = TOKEN_UNDO
       } else if token.str == "quit" {
          token.kind = TOKEN_QUIT
+      } else if token.str == "all" {
+         token.kind = TOKEN_ALL
+      } else if token.str == "first" {
+         token.kind = TOKEN_FIRST
       } else {
-         token.kind = TOKEN_SYMBOL
+         token.kind = TOKEN_IDENT
       }
    } else {
       match lexer_consume() {
