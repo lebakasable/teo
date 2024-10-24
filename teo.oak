@@ -20,7 +20,7 @@ struct Expr {
 
 fn expr_sym_or_var(name Str) Expr {
    let expr Expr
-   if name.data[0] >= 'A' && name.data[0] <= 'Z' {
+   if (name.data[0] >= 'A' && name.data[0] <= 'Z') || name.data[0] == '_' {
       expr.kind = EXPR_VAR
    } else {
       expr.kind = EXPR_SYM
@@ -152,7 +152,9 @@ fn pattern_match(pattern Expr, value Expr, bindings *Bindings) bool {
       return pattern.name == value.name
    } else if pattern.kind == EXPR_VAR {
       let bound_value Expr
-      if bindings_find(bindings, pattern.name, &bound_value) {
+      if pattern.name == "_" {
+         return true
+      } else if bindings_find(bindings, pattern.name, &bound_value) {
          return bound_value == value
       } else {
          let binding Binding
