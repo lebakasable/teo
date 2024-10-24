@@ -22,10 +22,11 @@ const (
    TOKEN_SHAPE
    TOKEN_APPLY
    TOKEN_DONE
+   TOKEN_QUIT
    COUNT_TOKENS
 )
 
-assert COUNT_TOKENS == 10
+assert COUNT_TOKENS == 11
 fn str_from_token_kind(kind Token_Kind) Str {
    match kind {
       TOKEN_EOF => return "end of file"
@@ -34,10 +35,11 @@ fn str_from_token_kind(kind Token_Kind) Str {
       TOKEN_LPAREN => return "'('"
       TOKEN_RPAREN => return "')'"
       TOKEN_EQ => return "'='"
-      TOKEN_RULE => return "keyword 'rule'"
-      TOKEN_SHAPE => return "keyword 'shape'"
-      TOKEN_APPLY => return "keyword 'apply'"
-      TOKEN_DONE => return "keyword 'done'"
+      TOKEN_RULE => return "command 'rule'"
+      TOKEN_SHAPE => return "command 'shape'"
+      TOKEN_APPLY => return "command 'apply'"
+      TOKEN_DONE => return "command 'done'"
+      TOKEN_QUIT => return "command 'quit'"
       else => assert false
    }
    return ""
@@ -120,7 +122,7 @@ fn error_invalid(name Str) {
    &stderr << lexer.pos << "error: invalid " << name << " '" << lexer.str.data[-1] << "'\n"
 }
 
-assert COUNT_TOKENS == 10
+assert COUNT_TOKENS == 11
 fn lexer_next(result *Token) bool {
    if lexer.peeked {
       lexer.peeked = false
@@ -172,6 +174,8 @@ fn lexer_next(result *Token) bool {
          token.kind = TOKEN_APPLY
       } else if token.str == "done" {
          token.kind = TOKEN_DONE
+      } else if token.str == "quit" {
+         token.kind = TOKEN_QUIT
       } else {
          token.kind = TOKEN_IDENT
       }
