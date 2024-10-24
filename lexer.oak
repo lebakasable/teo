@@ -14,24 +14,30 @@ alias Token_Kind int
 const (
    TOKEN_EOF
    TOKEN_IDENT
-   TOKEN_DEF
    TOKEN_COMMA
    TOKEN_LPAREN
    TOKEN_RPAREN
    TOKEN_EQ
+   TOKEN_RULE
+   TOKEN_SHAPE
+   TOKEN_APPLY
+   TOKEN_DONE
    COUNT_TOKENS
 )
 
-assert COUNT_TOKENS == 7
+assert COUNT_TOKENS == 10
 fn str_from_token_kind(kind Token_Kind) Str {
    match kind {
       TOKEN_EOF => return "end of file"
       TOKEN_IDENT => return "identifier"
-      TOKEN_DEF => return "'::'"
       TOKEN_COMMA => return "','"
       TOKEN_LPAREN => return "'('"
       TOKEN_RPAREN => return "')'"
       TOKEN_EQ => return "'='"
+      TOKEN_RULE => return "keyword 'rule'"
+      TOKEN_SHAPE => return "keyword 'shape'"
+      TOKEN_APPLY => return "keyword 'apply'"
+      TOKEN_DONE => return "keyword 'done'"
       else => assert false
    }
    return ""
@@ -114,7 +120,7 @@ fn error_invalid(name Str) {
    &stderr << lexer.pos << "error: invalid " << name << " '" << lexer.str.data[-1] << "'\n"
 }
 
-assert COUNT_TOKENS == 7
+assert COUNT_TOKENS == 10
 fn lexer_next(result *Token) bool {
    if lexer.peeked {
       lexer.peeked = false
@@ -158,14 +164,19 @@ fn lexer_next(result *Token) bool {
 
       token.str.size -= lexer.str.size
 
-      token.kind = TOKEN_IDENT
+      if token.str == "rule" {
+         token.kind = TOKEN_RULE
+      } else if token.str == "shape" {
+         token.kind = TOKEN_SHAPE
+      } else if token.str == "apply" {
+         token.kind = TOKEN_APPLY
+      } else if token.str == "done" {
+         token.kind = TOKEN_DONE
+      } else {
+         token.kind = TOKEN_IDENT
+      }
    } else {
       match lexer_consume() {
-         ':' => {
-            if lexer_match(':') {
-               token.kind = TOKEN_DEF
-            }
-         }
          ',' => token.kind = TOKEN_COMMA
          '(' => token.kind = TOKEN_LPAREN
          ')' => token.kind = TOKEN_RPAREN

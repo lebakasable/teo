@@ -245,34 +245,102 @@ struct Named_Rule {
    rule Rule
 }
 
-struct Rules {
-   data *Named_Rule
-   count int
-   capacity int
+struct Context {
+   rules *Named_Rule
+   rules_count int
+   rules_capacity int
+   curr_expr Expr
+   in_shape bool
 }
 
-fn parse_file(path *char, result *Rules) bool {
-   let rules Rules
-   rules.data = 0 as *Named_Rule
-   rules.count = 0
-   rules.capacity = 0
+fn context_new() Context {
+   let context Context
+   context.rules = 0 as *Named_Rule
+   context.rules_count = 0
+   context.rules_capacity = 0
+   context.in_shape = false
+   return context
+}
 
-   if !lexer_open(path) { return false }
-   let is_eof bool
-   if !lexer_read(TOKEN_EOF, &is_eof) { return false }
-   for !is_eof {
-      let name Token
-      if !lexer_expect(TOKEN_IDENT, &name) { return false }
-      let def_token Token
-      if !lexer_expect(TOKEN_DEF, &def_token) { return false }
-      let named_rule Named_Rule
-      named_rule.name = name.str
-      if !parse_rule(&named_rule.rule) { return false }
-      *(array_push(&rules.data as **char, &rules.count, &rules.capacity, sizeof(Named_Rule)) as *Named_Rule) = named_rule
-      if !lexer_read(TOKEN_EOF, &is_eof) { return false }
+fn context_rules_find(context *Context, name Str, rule *Rule) bool {
+   for let i = 0, i < context.rules_count, i += 1 {
+      if context.rules[i].name == name {
+         *rule = context.rules[i].rule
+         return true
+      }
    }
+   return false
+}
 
-   *result = rules
+fn context_rules_push(context *Context, name Str, rule Rule) {
+   let named_rule Named_Rule
+   named_rule.name = name
+   named_rule.rule = rule
+   *(array_push(&context.rules as **char, &context.rules_count, &context.rules_capacity, sizeof(Named_Rule)) as *Named_Rule) = named_rule
+}
+
+fn context_process_command(context *Context) bool {
+   let token Token
+   if !lexer_next(&token) { return false }
+
+   match token.kind {
+      TOKEN_RULE => {
+         let name Token
+         if !lexer_expect(TOKEN_IDENT, &name) { return false }
+         let existing_rule Rule
+         if context_rules_find(context, name.str, &existing_rule) {
+            &stderr << name.pos << "error: redefinition of existing rule '" << name.str << "'\n"
+            return false
+         }
+         let rule Rule
+         if !parse_expr(&rule.head) { return false }
+         let eq_token Token
+         if !lexer_expect(TOKEN_EQ, &eq_token) { return false }
+         if !parse_expr(&rule.body) { return false }
+         &stdout << "defined rule " << rule << "\n"
+         context_rules_push(context, name.str, rule)
+      }
+      TOKEN_SHAPE => {
+         if context.in_shape {
+            &stderr << "error: already shaping an expression\n"
+            return false
+         }
+         let expr Expr
+         if !parse_expr(&expr) { return false }
+         &stdout << "shaping " << expr << "\n"
+         context.curr_expr = expr
+         context.in_shape = true
+      }
+      TOKEN_APPLY => {
+         if !context.in_shape {
+            &stdout << "error: no shaping in place\n"
+            return false
+         }
+         let name Token
+         if !lexer_expect(TOKEN_IDENT, &name) { return false }
+         let rule Rule
+         if context_rules_find(context, name.str, &rule) {
+            let new_expr = rule_apply_all(rule, context.curr_expr)
+            &stdout << new_expr << "\n"
+            context.curr_expr = new_expr
+         } else {
+            &stderr << "error: rule '" << name.str << "' does not exist\n"
+            return false
+         }
+      }
+      TOKEN_DONE => {
+         if !context.in_shape {
+            &stdout << "error: no shaping in place\n"
+            return false
+         }
+         &stdout << "finished shaping expression " << context.curr_expr << "\n"
+         context.in_shape = false
+      }
+      else => {
+         &stderr << token.pos << "error: expected keyword 'rule', 'shape', 'apply' or 'done', got " << str_from_token_kind(token.kind) << "\n"
+         return false
+      }
+   }
    return true
 }
 
@@ -300,31 +368,14 @@ fn read_line(fd int) Str {
 }
 
 fn main() {
-   let std_path = "std.te"c
-   let rules Rules
-   if parse_file(std_path, &rules) {
-      &stdout << "info: successfully loaded rules from '" << str_from_cstr(std_path) << "'\n"
-
-      &stdout << "available rules:\n"
-      for let i = 0, i < rules.count, i += 1 {
-         &stdout << rules.data[i].name << " :: " << rules.data[i].rule << "\n"
-      }
-   }
-
-   let swap Rule
-   swap.head = expr_fun("swap") << (expr_fun("pair") << expr_sym("a") << expr_sym("b"))
-   swap.body = expr_fun("pair") << expr_sym("b") << expr_sym("a")
-
+   let context = context_new()
    for true {
       &stdout << "> "
       let line = read_line(STDIN)
       if line.size == 0 { break }
       if line.size > 1 {
          lexer_from_str(line, "<stdin>")
-         let expr Expr
-         if parse_expr(&expr) {
-            &stdout << rule_apply_all(swap, expr) << "\n"
-         }
+         context_process_command(&context)
       }
    }
 }
