@@ -1,5 +1,6 @@
 use std.io
 use std.array
+use lexer
 
 alias Expr_Kind int
 const (
@@ -59,6 +60,27 @@ fn [<<](fun *Expr, arg Expr) *Expr {
 
 fn [<<](fun Expr, arg Expr) Expr {
    return *(&fun << arg)
+}
+
+assert COUNT_EXPRS == 2
+fn expr_parse() Expr {
+   let name = lexer_expect(TOKEN_IDENT)
+   if lexer_peek_row(&lexer.buffer) && lexer.buffer.kind == TOKEN_LPAREN {
+      lexer.peeked = false
+
+      let fun = expr_fun(name.str)
+      if !lexer_read(TOKEN_RPAREN) {
+         for true {
+            &fun << expr_parse()
+            let token = lexer_either(TOKEN_COMMA, TOKEN_RPAREN)
+            if token.kind == TOKEN_RPAREN {
+               break
+            }
+         }
+      }
+      return fun
+   }
+   return expr_sym(name.str)
 }
 
 assert COUNT_EXPRS == 2
@@ -202,13 +224,10 @@ fn [<<](file *File, rule Rule) *File {
 }
 
 fn main() {
-   let swap Rule
-   swap.head = expr_fun("swap") << (expr_fun("pair") << expr_sym("a") << expr_sym("b"))
-   swap.body = expr_fun("pair") << expr_sym("b") << expr_sym("a")
-   
-   let expr = expr_fun("foo") << (expr_fun("swap") << (expr_fun("pair") << (expr_fun("f") << expr_sym("a")) << (expr_fun("g") << expr_sym("b")))) << (expr_fun("swap") << (expr_fun("pair") << (expr_fun("q") << expr_sym("c")) << (expr_fun("z") << expr_sym("d"))))
-
-   &stdout << "Rule:  " << swap << "\n"
-   &stdout << "Expr:  " << expr << "\n"
-   &stdout << "Expr': " << rule_apply_all(swap, expr) << "\n"
+   lexer.pos.path = "<stdin>"
+   lexer.str = "swap(pair(a, b))"
+   lexer.pos.row = 1
+   lexer.pos.col = 1
+   lexer.peeked = false
+   &stdout << expr_parse() << "\n"
 }
