@@ -1,6 +1,6 @@
 use std.io
 use std.array
-use lexer
+use src.lexer
 
 alias Expr_Kind int
 const (
@@ -303,7 +303,7 @@ fn context_process_command(context *Context) bool {
          let eq_token Token
          if !lexer_expect(TOKEN_EQ, &eq_token) { return false }
          if !parse_expr(&rule.body) { return false }
-         &stdout << "rule " << rule << "\n"
+         &stdout << rule << "\n"
          context_rules_push(context, name.str, rule)
       }
       TOKEN_SHAPE => {
@@ -313,7 +313,7 @@ fn context_process_command(context *Context) bool {
          }
          let expr Expr
          if !parse_expr(&expr) { return false }
-         &stdout << "shaping " << expr << "\n"
+         &stdout << " => " << expr << "\n"
          context.curr_expr = expr
          context.in_shape = true
       }
