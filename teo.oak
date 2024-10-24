@@ -297,7 +297,7 @@ fn context_process_command(context *Context) bool {
          let eq_token Token
          if !lexer_expect(TOKEN_EQ, &eq_token) { return false }
          if !parse_expr(&rule.body) { return false }
-         &stdout << "defined rule " << rule << "\n"
+         &stdout << "rule " << rule << "\n"
          context_rules_push(context, name.str, rule)
       }
       TOKEN_SHAPE => {
@@ -316,24 +316,29 @@ fn context_process_command(context *Context) bool {
             &stdout << "error: no shaping in place\n"
             return false
          }
-         let name Token
-         if !lexer_expect(TOKEN_IDENT, &name) { return false }
+         let token Token
+         if !lexer_either(TOKEN_IDENT, TOKEN_RULE, &token) { return false }
          let rule Rule
-         if context_rules_find(context, name.str, &rule) {
-            let new_expr = rule_apply_all(rule, context.curr_expr)
-            &stdout << new_expr << "\n"
-            context.curr_expr = new_expr
-         } else {
-            &stderr << "error: rule '" << name.str << "' does not exist\n"
-            return false
+         match token.kind {
+            TOKEN_IDENT => {
+               if !context_rules_find(context, token.str, &rule) {
+                  &stderr << "error: rule '" << token.str << "' does not exist\n"
+                  return false
+               }
+            }
+            TOKEN_RULE => {
+               if !parse_rule(&rule) { return false }
+            }
          }
+         let new_expr = rule_apply_all(rule, context.curr_expr)
+         &stdout << " => " << new_expr << "\n"
+         context.curr_expr = new_expr
       }
       TOKEN_DONE => {
          if !context.in_shape {
             &stdout << "error: no shaping in place\n"
             return false
          }
-         &stdout << "finished shaping expression " << context.curr_expr << "\n"
          context.in_shape = false
       }
       else => {
@@ -369,13 +374,23 @@ fn read_line(fd int) Str {
 
 fn main() {
    let context = context_new()
-   for true {
-      &stdout << "> "
-      let line = read_line(STDIN)
-      if line.size == 0 { break }
-      if line.size > 1 {
-         lexer_from_str(line, "<stdin>")
+   if argc > 0 {
+      if !lexer_open(argv[0]) { exit(1) }
+      let is_eof bool
+      if !lexer_read(TOKEN_EOF, &is_eof) { exit(1) }
+      for !is_eof {
          context_process_command(&context)
+         if !lexer_read(TOKEN_EOF, &is_eof) { exit(1) }
+      }
+   } else {
+      for true {
+         &stdout << "> "
+         let line = read_line(STDIN)
+         if line.size == 0 { break }
+         if line.size > 1 {
+            lexer_from_str(line, "<stdin>")
+            context_process_command(&context)
+         }
       }
    }
 }
