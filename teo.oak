@@ -1,0 +1,214 @@
+use std.io
+use std.array
+
+alias Expr_Kind int
+const (
+   EXPR_SYM
+   EXPR_FUN
+   COUNT_EXPRS
+)
+
+struct Expr {
+   kind Expr_Kind
+   name Str
+   args *char # *Expr
+   args_count int
+   args_capacity int
+} 
+
+fn expr_sym(name Str) Expr {
+   let expr Expr
+   expr.kind = EXPR_SYM
+   expr.name = name
+   return expr
+}
+
+fn expr_fun(name Str) Expr {
+   let expr Expr
+   expr.kind = EXPR_FUN
+   expr.name = name
+   expr.args = 0 as *char
+   expr.args_count = 0
+   expr.args_capacity = 0
+   return expr
+}
+
+assert COUNT_EXPRS == 2
+fn [==](a Expr, b Expr) bool {
+   if a.name != b.name {
+      return false
+   }
+   if a.kind == EXPR_FUN && b.kind == EXPR_FUN {
+      if a.args_count != b.args_count {
+         return false
+      }
+      for let i = 0, i < a.args_count, i += 1 {
+         if !((a.args as *Expr)[i] == (b.args as *Expr)[i]) {
+            return false
+         }
+      }
+   }
+   return true
+}
+
+fn [<<](fun *Expr, arg Expr) *Expr {
+   assert fun.kind == EXPR_FUN
+   *(array_push(&fun.args, &fun.args_count, &fun.args_capacity, sizeof(Expr)) as *Expr) = arg
+   return fun
+}
+
+fn [<<](fun Expr, arg Expr) Expr {
+   return *(&fun << arg)
+}
+
+assert COUNT_EXPRS == 2
+fn [<<](file *File, expr Expr) *File {
+   match expr.kind {
+      EXPR_SYM => file << expr.name
+      EXPR_FUN => {
+         file << expr.name << "("
+         for let i = 0, i < expr.args_count, i += 1 {
+            if i > 0 { file << ", " }
+            file << (expr.args as *Expr)[i]
+         }
+         file << ")"
+      }
+   }
+   return file
+}
+
+struct Binding {
+   name Str
+   value Expr
+}
+
+struct Bindings {
+   data *Binding
+   count int
+   capacity int
+}
+
+fn [<<](file *File, bindings Bindings) *File {
+   for let i = 0, i < bindings.count, i += 1 {
+      file << bindings.data[i].name << " -> " << bindings.data[i].value
+      if i < bindings.count - 1 { file << "\n" }
+   }
+   return file
+}
+
+fn bindings_new() Bindings {
+   let bindings Bindings
+   bindings.data = 0 as *Binding
+   bindings.count = 0
+   bindings.capacity = 0
+   return bindings
+}
+
+fn bindings_find(bindings *Bindings, name Str, value *Expr) bool {
+   for let i = 0, i < bindings.count, i += 1 {
+      if bindings.data[i].name == name {
+         *value = bindings.data[i].value
+         return true
+      }
+   }
+   return false
+}
+
+assert COUNT_EXPRS == 2
+fn bindings_substitute(bindings *Bindings, expr Expr) Expr {
+   match expr.kind {
+      EXPR_SYM => {
+         let value Expr
+         if bindings_find(bindings, expr.name, &value) {
+            return value
+         }
+         return expr
+      }
+      EXPR_FUN => {
+         let new_name Str
+         let value Expr
+         if bindings_find(bindings, expr.name, &value) {
+            if value.kind != EXPR_SYM {
+               &stderr << "error: expected symbol in the place of the functor name\n"
+               exit(1)
+            }
+            new_name = value.name
+         } else {
+            new_name = expr.name
+         }
+         let new_fun = expr_fun(new_name)
+         for let i = 0, i < expr.args_count, i += 1 {
+            &new_fun << bindings_substitute(bindings, (expr.args as *Expr)[i])
+         }
+         return new_fun
+      }
+   }
+   assert false
+   return expr
+}
+
+assert COUNT_EXPRS == 2
+fn pattern_match(pattern Expr, value Expr, bindings *Bindings) bool {
+   if pattern.kind == EXPR_SYM {
+      let bound_value Expr
+      if bindings_find(bindings, pattern.name, &bound_value) {
+         return bound_value == value
+      } else {
+         let binding Binding
+         binding.name = pattern.name
+         binding.value = value
+         *(array_push(&bindings.data as **char, &bindings.count, &bindings.capacity, sizeof(Binding)) as *Binding) = binding
+         return true
+      }
+   } else if pattern.kind == EXPR_FUN && value.kind == EXPR_FUN {
+      if pattern.name == value.name && pattern.args_count == value.args_count {
+         for let i = 0, i < pattern.args_count, i += 1 {
+            if !pattern_match((pattern.args as *Expr)[i], (value.args as *Expr)[i], bindings) {
+               return false
+            }
+         }
+         return true
+      }
+   }
+   return false
+}
+
+struct Rule {
+   head Expr
+   body Expr
+}
+
+assert COUNT_EXPRS == 2
+fn rule_apply_all(rule Rule, expr Expr) Expr {
+   let bindings = bindings_new()
+   if !pattern_match(rule.head, expr, &bindings) {
+      match expr.kind {
+         EXPR_SYM => return expr
+         EXPR_FUN => {
+            let new_fun = expr_fun(expr.name)
+            for let i = 0, i < expr.args_count, i += 1 {
+               &new_fun << rule_apply_all(rule, (expr.args as *Expr)[i])
+            }
+            return new_fun
+         }
+      }
+   }
+   return bindings_substitute(&bindings, rule.body)
+}
+
+fn [<<](file *File, rule Rule) *File {
+   file << rule.head << " = " << rule.body
+   return file
+}
+
+fn main() {
+   let swap Rule
+   swap.head = expr_fun("swap") << (expr_fun("pair") << expr_sym("a") << expr_sym("b"))
+   swap.body = expr_fun("pair") << expr_sym("b") << expr_sym("a")
+   
+   let expr = expr_fun("foo") << (expr_fun("swap") << (expr_fun("pair") << (expr_fun("f") << expr_sym("a")) << (expr_fun("g") << expr_sym("b")))) << (expr_fun("swap") << (expr_fun("pair") << (expr_fun("q") << expr_sym("c")) << (expr_fun("z") << expr_sym("d"))))
+
+   &stdout << "Rule:  " << swap << "\n"
+   &stdout << "Expr:  " << expr << "\n"
+   &stdout << "Expr': " << rule_apply_all(swap, expr) << "\n"
+}
