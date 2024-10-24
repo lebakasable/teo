@@ -1,5 +1,5 @@
-rule add0 add(0, a) = a
-rule add add(s(a), b) = s(add(a, b))
+rule add0 add(0, A) = A
+rule add add(s(A), B) = s(add(A, B))
 
 shape add(s(s(0)), s(s(s(0))))
    apply add

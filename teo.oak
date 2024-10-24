@@ -5,6 +5,7 @@ use src.lexer
 alias Expr_Kind int
 const (
    EXPR_SYM
+   EXPR_VAR
    EXPR_FUN
    COUNT_EXPRS
 )
@@ -17,9 +18,13 @@ struct Expr {
    args_capacity int
 } 
 
-fn expr_sym(name Str) Expr {
+fn expr_sym_or_var(name Str) Expr {
    let expr Expr
-   expr.kind = EXPR_SYM
+   if name.data[0] >= 'A' && name.data[0] <= 'Z' {
+      expr.kind = EXPR_VAR
+   } else {
+      expr.kind = EXPR_SYM
+   }
    expr.name = name
    return expr
 }
@@ -34,7 +39,7 @@ fn expr_fun(name Str) Expr {
    return expr
 }
 
-assert COUNT_EXPRS == 2
+assert COUNT_EXPRS == 3
 fn [==](a Expr, b Expr) bool {
    if a.name != b.name {
       return false
@@ -62,10 +67,10 @@ fn [<<](fun Expr, arg Expr) Expr {
    return *(&fun << arg)
 }
 
-assert COUNT_EXPRS == 2
+assert COUNT_EXPRS == 3
 fn [<<](file *File, expr Expr) *File {
    match expr.kind {
-      EXPR_SYM => file << expr.name
+      EXPR_SYM, EXPR_VAR => file << expr.name
       EXPR_FUN => {
          file << expr.name << "("
          for let i = 0, i < expr.args_count, i += 1 {
@@ -99,10 +104,11 @@ fn bindings_find(bindings *Bindings, name Str, value *Expr) bool {
    return false
 }
 
-assert COUNT_EXPRS == 2
+assert COUNT_EXPRS == 3
 fn bindings_substitute(bindings *Bindings, expr Expr) Expr {
    match expr.kind {
-      EXPR_SYM => {
+      EXPR_SYM => return expr
+      EXPR_VAR => {
          let value Expr
          if bindings_find(bindings, expr.name, &value) {
             return value
@@ -140,9 +146,11 @@ fn [<<](file *File, bindings Bindings) *File {
    return file
 }
 
-assert COUNT_EXPRS == 2
+assert COUNT_EXPRS == 3
 fn pattern_match(pattern Expr, value Expr, bindings *Bindings) bool {
-   if pattern.kind == EXPR_SYM {
+   if pattern.kind == EXPR_SYM && value.kind == EXPR_SYM {
+      return pattern.name == value.name
+   } else if pattern.kind == EXPR_VAR {
       let bound_value Expr
       if bindings_find(bindings, pattern.name, &bound_value) {
          return bound_value == value
@@ -171,7 +179,7 @@ struct Rule {
    body Expr
 }
 
-assert COUNT_EXPRS == 2
+assert COUNT_EXPRS == 3
 fn rule_apply_all(rule Rule, expr Expr) Expr {
    let bindings Bindings
    bindings.data = 0 as *Binding
@@ -180,7 +188,7 @@ fn rule_apply_all(rule Rule, expr Expr) Expr {
 
    if !pattern_match(rule.head, expr, &bindings) {
       match expr.kind {
-         EXPR_SYM => return expr
+         EXPR_SYM, EXPR_VAR => return expr
          EXPR_FUN => {
             let new_fun = expr_fun(expr.name)
             for let i = 0, i < expr.args_count, i += 1 {
@@ -199,7 +207,7 @@ fn [<<](file *File, rule Rule) *File {
    return file
 }
 
-assert COUNT_EXPRS == 2
+assert COUNT_EXPRS == 3
 fn parse_expr(result *Expr) bool {
    let name Token
    if !lexer_expect(TOKEN_SYMBOL, &name) { return false }
@@ -226,7 +234,7 @@ fn parse_expr(result *Expr) bool {
       *result = fun
       return true
    }
-   *result = expr_sym(name.str)
+   *result = expr_sym_or_var(name.str)
    return true
 }
 
@@ -303,7 +311,6 @@ fn context_process_command(context *Context) bool {
          let eq_token Token
          if !lexer_expect(TOKEN_EQ, &eq_token) { return false }
          if !parse_expr(&rule.body) { return false }
-         &stdout << rule << "\n"
          context_rules_push(context, name.str, rule)
       }
       TOKEN_SHAPE => {
