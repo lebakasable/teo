@@ -279,11 +279,11 @@ fn context_rules_push(context *Context, name Str, rule Rule) {
    *(array_push(&context.rules as **char, &context.rules_count, &context.rules_capacity, sizeof(Named_Rule)) as *Named_Rule) = named_rule
 }
 
-fn context_process_command(context *Context, repl bool) bool {
+fn context_process_command(context *Context) bool {
    let token Token
    if !lexer_next(&token) { return false }
 
-   if repl {
+   if in_repl {
       match token.kind {
          TOKEN_QUIT => exit(0)
       }
@@ -386,18 +386,23 @@ fn main() {
       let is_eof bool
       if !lexer_read(TOKEN_EOF, &is_eof) { exit(1) }
       for !is_eof {
-         context_process_command(&context, false)
+         context_process_command(&context)
          if !lexer_read(TOKEN_EOF, &is_eof) { exit(1) }
       }
    } else {
-      lexer_in_repl = true
+      in_repl = true
       for true {
-         &stdout << "> "
+         if context.in_shape {
+            prompt = "> "
+         } else {
+            prompt = "teo> "
+         }
+         &stdout << prompt
          let line = read_line(STDIN)
          if line.size == 0 { &stdout << "\n" break }
          if line.size > 1 {
             lexer_from_str(line, "<stdin>")
-            context_process_command(&context, true)
+            context_process_command(&context)
          }
       }
    }
