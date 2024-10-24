@@ -491,7 +491,7 @@ fn main() {
       let is_eof bool
       if !lexer_read(TOKEN_EOF, &is_eof) { exit(1) }
       for !is_eof {
-         context_process_command(&context)
+         if !context_process_command(&context) { exit(1) }
          if !lexer_read(TOKEN_EOF, &is_eof) { exit(1) }
       }
    } else {
