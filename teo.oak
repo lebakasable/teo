@@ -63,27 +63,6 @@ fn [<<](fun Expr, arg Expr) Expr {
 }
 
 assert COUNT_EXPRS == 2
-fn expr_parse() Expr {
-   let name = lexer_expect(TOKEN_IDENT)
-   if lexer_peek_row(&lexer.buffer) && lexer.buffer.kind == TOKEN_LPAREN {
-      lexer.peeked = false
-
-      let fun = expr_fun(name.str)
-      if !lexer_read(TOKEN_RPAREN) {
-         for true {
-            &fun << expr_parse()
-            let token = lexer_either(TOKEN_COMMA, TOKEN_RPAREN)
-            if token.kind == TOKEN_RPAREN {
-               break
-            }
-         }
-      }
-      return fun
-   }
-   return expr_sym(name.str)
-}
-
-assert COUNT_EXPRS == 2
 fn [<<](file *File, expr Expr) *File {
    match expr.kind {
       EXPR_SYM => file << expr.name
@@ -108,22 +87,6 @@ struct Bindings {
    data *Binding
    count int
    capacity int
-}
-
-fn [<<](file *File, bindings Bindings) *File {
-   for let i = 0, i < bindings.count, i += 1 {
-      file << bindings.data[i].name << " -> " << bindings.data[i].value
-      if i < bindings.count - 1 { file << "\n" }
-   }
-   return file
-}
-
-fn bindings_new() Bindings {
-   let bindings Bindings
-   bindings.data = 0 as *Binding
-   bindings.count = 0
-   bindings.capacity = 0
-   return bindings
 }
 
 fn bindings_find(bindings *Bindings, name Str, value *Expr) bool {
@@ -169,6 +132,14 @@ fn bindings_substitute(bindings *Bindings, expr Expr) Expr {
    return expr
 }
 
+fn [<<](file *File, bindings Bindings) *File {
+   for let i = 0, i < bindings.count, i += 1 {
+      file << bindings.data[i].name << " -> " << bindings.data[i].value
+      if i < bindings.count - 1 { file << "\n" }
+   }
+   return file
+}
+
 assert COUNT_EXPRS == 2
 fn pattern_match(pattern Expr, value Expr, bindings *Bindings) bool {
    if pattern.kind == EXPR_SYM {
@@ -202,7 +173,11 @@ struct Rule {
 
 assert COUNT_EXPRS == 2
 fn rule_apply_all(rule Rule, expr Expr) Expr {
-   let bindings = bindings_new()
+   let bindings Bindings
+   bindings.data = 0 as *Binding
+   bindings.count = 0
+   bindings.capacity = 0
+
    if !pattern_match(rule.head, expr, &bindings) {
       match expr.kind {
          EXPR_SYM => return expr
@@ -215,6 +190,7 @@ fn rule_apply_all(rule Rule, expr Expr) Expr {
          }
       }
    }
+
    return bindings_substitute(&bindings, rule.body)
 }
 
@@ -223,11 +199,132 @@ fn [<<](file *File, rule Rule) *File {
    return file
 }
 
+assert COUNT_EXPRS == 2
+fn parse_expr(result *Expr) bool {
+   let name Token
+   if !lexer_expect(TOKEN_IDENT, &name) { return false }
+   let peek_row bool
+   if !lexer_peek_row(&lexer.buffer, &peek_row) { return false }
+   if peek_row && lexer.buffer.kind == TOKEN_LPAREN {
+      lexer.peeked = false
+
+      let fun = expr_fun(name.str)
+      let read bool
+      if !lexer_read(TOKEN_RPAREN, &read) { return false }
+      if !read {
+         for true {
+            let expr Expr
+            if !parse_expr(&expr) { return false }
+            &fun << expr
+            let token Token
+            if !lexer_either(TOKEN_COMMA, TOKEN_RPAREN, &token) { return false }
+            if token.kind == TOKEN_RPAREN {
+               break
+            }
+         }
+      }
+      *result = fun
+      return true
+   }
+   *result = expr_sym(name.str)
+   return true
+}
+
+fn parse_rule(result *Rule) bool {
+   let rule Rule
+   if !parse_expr(&rule.head) { return false }
+   let eq_token Token
+   if !lexer_expect(TOKEN_EQ, &eq_token) { return false }
+   if !parse_expr(&rule.body) { return false }
+   *result = rule
+   return true
+}
+
+struct Named_Rule {
+   name Str
+   rule Rule
+}
+
+struct Rules {
+   data *Named_Rule
+   count int
+   capacity int
+}
+
+fn parse_file(path *char, result *Rules) bool {
+   let rules Rules
+   rules.data = 0 as *Named_Rule
+   rules.count = 0
+   rules.capacity = 0
+
+   lexer_open(path)
+   let is_eof bool
+   if !lexer_read(TOKEN_EOF, &is_eof) { return false }
+   for !is_eof {
+      let name Token
+      if !lexer_expect(TOKEN_IDENT, &name) { return false }
+      let def_token Token
+      if !lexer_expect(TOKEN_DEF, &def_token) { return false }
+      let named_rule Named_Rule
+      named_rule.name = name.str
+      if !parse_rule(&named_rule.rule) { return false }
+      *(array_push(&rules.data as **char, &rules.count, &rules.capacity, sizeof(Named_Rule)) as *Named_Rule) = named_rule
+      if !lexer_read(TOKEN_EOF, &is_eof) { return false }
+   }
+
+   *result = rules
+   return true
+}
+
+fn read_line(fd int) Str {
+   let buf = 0 as *char
+   let buf_count = 0
+   let buf_capacity = 0
+
+   let ch char
+   for true {
+      if read(fd, &ch, 1) <= 0 {
+         break
+      }
+
+      *array_push(&buf, &buf_count, &buf_capacity, sizeof(char)) = ch
+      if ch == '\n' {
+         break
+      }
+   }
+
+   let str Str
+   str.data = buf
+   str.size = buf_count
+   return str
+}
+
 fn main() {
-   lexer.pos.path = "<stdin>"
-   lexer.str = "swap(pair(a, b))"
-   lexer.pos.row = 1
-   lexer.pos.col = 1
-   lexer.peeked = false
-   &stdout << expr_parse() << "\n"
+   let std_path = "std.teo"c
+   let rules Rules
+   if parse_file(std_path, &rules) {
+      &stdout << "info: successfully loaded rules from '" << str_from_cstr(std_path) << "'\n"
+
+      &stdout << "available rules:\n"
+      for let i = 0, i < rules.count, i += 1 {
+         &stdout << rules.data[i].name << " :: " << rules.data[i].rule << "\n"
+      }
+   }
+
+   let swap Rule
+   swap.head = expr_fun("swap") << (expr_fun("pair") << expr_sym("a") << expr_sym("b"))
+   swap.body = expr_fun("pair") << expr_sym("b") << expr_sym("a")
+
+   for true {
+      &stdout << "> "
+      let line = read_line(STDIN)
+      if line.size == 0 { break }
+      if line.size > 1 {
+         lexer_from_str(line, "<stdin>")
+         let expr Expr
+         if parse_expr(&expr) {
+            &stdout << rule_apply_all(swap, expr) << "\n"
+         }
+      }
+   }
 }

@@ -14,6 +14,7 @@ alias Token_Kind int
 const (
    TOKEN_EOF
    TOKEN_IDENT
+   TOKEN_DEF
    TOKEN_COMMA
    TOKEN_LPAREN
    TOKEN_RPAREN
@@ -21,11 +22,12 @@ const (
    COUNT_TOKENS
 )
 
-assert COUNT_TOKENS == 6
+assert COUNT_TOKENS == 7
 fn str_from_token_kind(kind Token_Kind) Str {
    match kind {
       TOKEN_EOF => return "end of file"
       TOKEN_IDENT => return "identifier"
+      TOKEN_DEF => return "'::'"
       TOKEN_COMMA => return "','"
       TOKEN_LPAREN => return "'('"
       TOKEN_RPAREN => return "')'"
@@ -52,7 +54,7 @@ struct Lexer {
 
 let lexer Lexer
 
-fn lexer_open(path *char) {
+fn lexer_open(path *char) bool {
    lexer.pos.path = str_from_cstr(path)
 
    if !read_file(&lexer.str, path) {
@@ -61,9 +63,18 @@ fn lexer_open(path *char) {
       }
 
       &stderr << "error: could not read file '" << lexer.pos.path << "'\n"
-      exit(1)
+      return false
    }
 
+   lexer.pos.row = 1
+   lexer.pos.col = 1
+   lexer.peeked = false
+   return true
+}
+
+fn lexer_from_str(str Str, file Str) {
+   lexer.pos.path = file
+   lexer.str = str
    lexer.pos.row = 1
    lexer.pos.col = 1
    lexer.peeked = false
@@ -101,15 +112,15 @@ fn lexer_match(ch char) bool {
 
 fn error_invalid(name Str) {
    &stderr << lexer.pos << "error: invalid " << name << " '" << lexer.str.data[-1] << "'\n"
-   exit(1)
 }
 
-assert COUNT_TOKENS == 6
-fn lexer_next() Token {
+assert COUNT_TOKENS == 7
+fn lexer_next(result *Token) bool {
    if lexer.peeked {
       lexer.peeked = false
       lexer.prev_row = lexer.buffer.pos.row
-      return lexer.buffer
+      *result = lexer.buffer
+      return true
    }
 
    for lexer.str.size > 0 {
@@ -150,6 +161,11 @@ fn lexer_next() Token {
       token.kind = TOKEN_IDENT
    } else {
       match lexer_consume() {
+         ':' => {
+            if lexer_match(':') {
+               token.kind = TOKEN_DEF
+            }
+         }
          ',' => token.kind = TOKEN_COMMA
          '(' => token.kind = TOKEN_LPAREN
          ')' => token.kind = TOKEN_RPAREN
@@ -157,6 +173,7 @@ fn lexer_next() Token {
          else => {
             lexer.pos = token.pos
             error_invalid("character")
+            return false
          }
       }
 
@@ -164,43 +181,54 @@ fn lexer_next() Token {
    }
 
    lexer.prev_row = token.pos.row
-   return token
+   *result = token
+   return true
 }
 
-fn lexer_peek() Token {
+fn lexer_peek(result *Token) bool {
    let prev_row = lexer.prev_row
    if !lexer.peeked {
-      lexer_buffer(lexer_next())
+      let token Token
+      if !lexer_next(&token) { return false }
+      lexer_buffer(token)
       lexer.prev_row = prev_row
    }
-   return lexer.buffer
+   *result = lexer.buffer
+   return true
 }
 
-fn lexer_read(kind Token_Kind) bool {
-   lexer_peek()
+fn lexer_read(kind Token_Kind, result *bool) bool {
+   let token Token
+   if !lexer_peek(&token) { return false }
    lexer.peeked = lexer.buffer.kind != kind
-   return !lexer.peeked
+   *result = !lexer.peeked
+   return true
 }
 
-fn lexer_expect(kind Token_Kind) Token {
-   let token = lexer_next()
+fn lexer_expect(kind Token_Kind, result *Token) bool {
+   let token Token
+   if !lexer_next(&token) { return false }
    if token.kind != kind {
       &stderr << token.pos << "error: expected " << str_from_token_kind(kind) << ", got " << str_from_token_kind(token.kind) << "\n"
-      exit(1)
+      return false
    }
-   return token
+   *result = token
+   return true
 }
 
-fn lexer_either(a Token_Kind, b Token_Kind) Token {
-   let token = lexer_next()
+fn lexer_either(a Token_Kind, b Token_Kind, result *Token) bool {
+   let token Token
+   if !lexer_next(&token) { return false }
    if token.kind != a && token.kind != b {
       &stderr << token.pos << "error: expected " << str_from_token_kind(a) << " or " << str_from_token_kind(b) << ", got " << str_from_token_kind(token.kind) << "\n"
-      exit(1)
+      return false
    }
-   return token
+   *result = token
+   return true
 }
 
-fn lexer_peek_row(token *Token) bool {
-   *token = lexer_peek()
-   return token.pos.row == lexer.prev_row
+fn lexer_peek_row(token *Token, result *bool) bool {
+   if !lexer_peek(token) { return false }
+   *result = token.pos.row == lexer.prev_row
+   return true
 }
