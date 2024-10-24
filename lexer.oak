@@ -1,5 +1,7 @@
 use std.io
 
+let lexer_in_repl = false
+
 struct Pos {
    path Str
    row int
@@ -7,13 +9,21 @@ struct Pos {
 }
 
 fn [<<](f *File, pos Pos) *File {
-   return f << pos.path << ':' << pos.row << ':' << pos.col << ": "
+   if lexer_in_repl {
+      for let i = 0, i <= pos.col, i += 1 {
+         f << " "
+      }
+      f << "^\n"
+   } else {
+      f << pos.path << ':' << pos.row << ':' << pos.col << ": "
+   }
+   return f
 }
 
 alias Token_Kind int
 const (
    TOKEN_EOF
-   TOKEN_IDENT
+   TOKEN_SYMBOL
    TOKEN_COMMA
    TOKEN_LPAREN
    TOKEN_RPAREN
@@ -30,7 +40,7 @@ assert COUNT_TOKENS == 11
 fn str_from_token_kind(kind Token_Kind) Str {
    match kind {
       TOKEN_EOF => return "end of file"
-      TOKEN_IDENT => return "identifier"
+      TOKEN_SYMBOL => return "symbol"
       TOKEN_COMMA => return "','"
       TOKEN_LPAREN => return "'('"
       TOKEN_RPAREN => return "')'"
@@ -159,7 +169,7 @@ fn lexer_next(result *Token) bool {
 
    if lexer.str.size == 0 {
       token.kind = TOKEN_EOF
-   } else if isalpha(*lexer.str.data) || *lexer.str.data == '_' {
+   } else if isalnum(*lexer.str.data) || *lexer.str.data == '_' {
       for lexer.str.size > 0 && (isalnum(*lexer.str.data) || *lexer.str.data == '_') {
          lexer_advance()
       }
@@ -177,7 +187,7 @@ fn lexer_next(result *Token) bool {
       } else if token.str == "quit" {
          token.kind = TOKEN_QUIT
       } else {
-         token.kind = TOKEN_IDENT
+         token.kind = TOKEN_SYMBOL
       }
    } else {
       match lexer_consume() {

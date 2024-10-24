@@ -202,7 +202,7 @@ fn [<<](file *File, rule Rule) *File {
 assert COUNT_EXPRS == 2
 fn parse_expr(result *Expr) bool {
    let name Token
-   if !lexer_expect(TOKEN_IDENT, &name) { return false }
+   if !lexer_expect(TOKEN_SYMBOL, &name) { return false }
    let peek_row bool
    if !lexer_peek_row(&lexer.buffer, &peek_row) { return false }
    if peek_row && lexer.buffer.kind == TOKEN_LPAREN {
@@ -292,7 +292,7 @@ fn context_process_command(context *Context, repl bool) bool {
    match token.kind {
       TOKEN_RULE => {
          let name Token
-         if !lexer_expect(TOKEN_IDENT, &name) { return false }
+         if !lexer_expect(TOKEN_SYMBOL, &name) { return false }
          let existing_rule Rule
          if context_rules_find(context, name.str, &existing_rule) {
             &stderr << name.pos << "error: redefinition of existing rule '" << name.str << "'\n"
@@ -323,10 +323,10 @@ fn context_process_command(context *Context, repl bool) bool {
             return false
          }
          let token Token
-         if !lexer_either(TOKEN_IDENT, TOKEN_RULE, &token) { return false }
+         if !lexer_either(TOKEN_SYMBOL, TOKEN_RULE, &token) { return false }
          let rule Rule
          match token.kind {
-            TOKEN_IDENT => {
+            TOKEN_SYMBOL => {
                if !context_rules_find(context, token.str, &rule) {
                   &stderr << "error: rule '" << token.str << "' does not exist\n"
                   return false
@@ -390,10 +390,11 @@ fn main() {
          if !lexer_read(TOKEN_EOF, &is_eof) { exit(1) }
       }
    } else {
+      lexer_in_repl = true
       for true {
          &stdout << "> "
          let line = read_line(STDIN)
-         if line.size == 0 { break }
+         if line.size == 0 { &stdout << "\n" break }
          if line.size > 1 {
             lexer_from_str(line, "<stdin>")
             context_process_command(&context, true)
