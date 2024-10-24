@@ -257,7 +257,7 @@ fn parse_file(path *char, result *Rules) bool {
    rules.count = 0
    rules.capacity = 0
 
-   lexer_open(path)
+   if !lexer_open(path) { return false }
    let is_eof bool
    if !lexer_read(TOKEN_EOF, &is_eof) { return false }
    for !is_eof {
@@ -300,7 +300,7 @@ fn read_line(fd int) Str {
 }
 
 fn main() {
-   let std_path = "std.teo"c
+   let std_path = "std.te"c
    let rules Rules
    if parse_file(std_path, &rules) {
       &stdout << "info: successfully loaded rules from '" << str_from_cstr(std_path) << "'\n"
