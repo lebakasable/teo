@@ -200,13 +200,13 @@ fn rule_apply(rule int, expr int, strategy int, halt *bool) int {
    return 0
 }
 
-struct Named_Rule {
+struct Rule {
    name Token
    rule int
 }
 
 struct Context {
-   rules *Named_Rule
+   rules *Rule
    rules_count int
    rules_capacity int
    curr_expr int
@@ -218,7 +218,7 @@ struct Context {
 
 fn context_new() Context {
    let context Context
-   context.rules = 0 as *Named_Rule
+   context.rules = 0 as *Rule
    context.rules_count = 0
    context.rules_capacity = 0
    context.curr_expr = 0
@@ -272,10 +272,10 @@ fn context_process_command(context *Context) bool {
             &stderr << name.pos << "error: redefinition of existing rule '" << name.str << "'\n"
             return false
          }
-         let named_rule Named_Rule
-         named_rule.name = name
-         named_rule.rule = stmt
-         *(array_push(&context.rules as **char, &context.rules_count, &context.rules_capacity, sizeof(Named_Rule)) as *Named_Rule) = named_rule
+         let rule Rule
+         rule.name = name
+         rule.rule = stmt
+         *(array_push(&context.rules as **char, &context.rules_count, &context.rules_capacity, sizeof(Rule)) as *Rule) = rule
       }
       NODE_SHAPE => {
          if context.in_shape {
