@@ -1,91 +1,11 @@
 use std.io
 use std.array
 use src.lexer
-
-alias Expr_Kind int
-const (
-   EXPR_SYM
-   EXPR_VAR
-   EXPR_FUN
-   COUNT_EXPRS
-)
-
-struct Expr {
-   kind Expr_Kind
-   name Str
-   args *Expr
-   args_count int
-   args_capacity int
-} 
-
-fn expr_sym_or_var(name Str) Expr {
-   let expr Expr
-   if (name.data[0] >= 'A' && name.data[0] <= 'Z') || name.data[0] == '_' {
-      expr.kind = EXPR_VAR
-   } else {
-      expr.kind = EXPR_SYM
-   }
-   expr.name = name
-   return expr
-}
-
-fn expr_fun(name Str) Expr {
-   let expr Expr
-   expr.kind = EXPR_FUN
-   expr.name = name
-   expr.args = 0 as *Expr
-   expr.args_count = 0
-   expr.args_capacity = 0
-   return expr
-}
-
-assert COUNT_EXPRS == 3
-fn [==](a Expr, b Expr) bool {
-   if a.name != b.name {
-      return false
-   }
-   if a.kind == EXPR_FUN && b.kind == EXPR_FUN {
-      if a.args_count != b.args_count {
-         return false
-      }
-      for let i = 0, i < a.args_count, i += 1 {
-         if !((a.args as *Expr)[i] == (b.args as *Expr)[i]) {
-            return false
-         }
-      }
-   }
-   return true
-}
-
-fn [<<](fun *Expr, arg Expr) *Expr {
-   assert fun.kind == EXPR_FUN
-   *(array_push(&fun.args as **char, &fun.args_count, &fun.args_capacity, sizeof(Expr)) as *Expr) = arg
-   return fun
-}
-
-fn [<<](fun Expr, arg Expr) Expr {
-   return *(&fun << arg)
-}
-
-assert COUNT_EXPRS == 3
-fn [<<](file *File, expr Expr) *File {
-   match expr.kind {
-      EXPR_SYM, EXPR_VAR => file << expr.name
-      EXPR_FUN => {
-         file << expr.name << "("
-         for let i = 0, i < expr.args_count, i += 1 {
-            if i > 0 { file << ", " }
-            file << (expr.args as *Expr)[i]
-         }
-         file << ")"
-      }
-   }
-   return file
-}
+use src.parser
 
 struct Binding {
-   name Str
-   value Expr
+   name Token
+   value int
 }
 
 struct Bindings {
@@ -94,9 +14,9 @@ struct Bindings {
    capacity int
 }
 
-fn bindings_find(bindings *Bindings, name Str, value *Expr) bool {
+fn bindings_find(bindings *Bindings, name Token, value *int) bool {
    for let i = 0, i < bindings.count, i += 1 {
-      if bindings.data[i].name == name {
+      if bindings.data[i].name.str == name.str {
          *value = bindings.data[i].value
          return true
       }
@@ -104,74 +24,85 @@ fn bindings_find(bindings *Bindings, name Str, value *Expr) bool {
    return false
 }
 
-assert COUNT_EXPRS == 3
-fn bindings_substitute(bindings *Bindings, expr Expr) Expr {
-   match expr.kind {
-      EXPR_SYM => return expr
-      EXPR_VAR => {
-         let value Expr
-         if bindings_find(bindings, expr.name, &value) {
+assert COUNT_NODES == 11
+fn bindings_substitute(bindings *Bindings, expr int) int {
+   match nodes[expr].kind {
+      NODE_SYM => return expr
+      NODE_VAR => {
+         let value int
+         if bindings_find(bindings, nodes[expr].token, &value) {
             return value
          }
          return expr
       }
-      EXPR_FUN => {
-         let new_name Str
-         let value Expr
-         if bindings_find(bindings, expr.name, &value) {
-            if value.kind != EXPR_SYM {
+      NODE_FUN => {
+         let new_name Token
+         let value int
+         if bindings_find(bindings, nodes[expr].token, &value) {
+            if nodes[value].kind != NODE_SYM {
                &stderr << "error: expected symbol in the place of the functor name\n"
                exit(1)
             }
-            new_name = value.name
+            new_name = nodes[value].token
          } else {
-            new_name = expr.name
+            new_name = nodes[expr].token
          }
-         let new_fun = expr_fun(new_name)
-         for let i = 0, i < expr.args_count, i += 1 {
-            &new_fun << bindings_substitute(bindings, (expr.args as *Expr)[i])
+         let new_fun = node_new(NODE_FUN, new_name)
+         let new_args = &nodes[new_fun].nodes[NODE_FUN_ARGS]
+         for let arg = nodes[expr].nodes[NODE_FUN_ARGS], arg != 0, arg = nodes[arg].next {
+            new_args = node_list_push(new_args, bindings_substitute(bindings, arg))
+            nodes[*new_args].next = 0
          }
          return new_fun
+      }
+      NODE_BINARY => {
+         nodes[expr].nodes[NODE_BINARY_LHS] = bindings_substitute(bindings, nodes[expr].nodes[NODE_BINARY_LHS])
+         nodes[expr].nodes[NODE_BINARY_RHS] = bindings_substitute(bindings, nodes[expr].nodes[NODE_BINARY_RHS])
+         return expr
+      }
+      NODE_UNARY => {
+         nodes[expr].nodes[NODE_UNARY_EXPR] = bindings_substitute(bindings, nodes[expr].nodes[NODE_UNARY_EXPR])
+         return expr
       }
    }
    assert false
    return expr
 }
 
-fn [<<](file *File, bindings Bindings) *File {
-   for let i = 0, i < bindings.count, i += 1 {
-      file << bindings.data[i].name << " -> " << bindings.data[i].value
-      if i < bindings.count - 1 { file << "\n" }
-   }
-   return file
-}
-
-assert COUNT_EXPRS == 3
-fn pattern_match(pattern Expr, value Expr, bindings *Bindings) bool {
-   if pattern.kind == EXPR_SYM && value.kind == EXPR_SYM {
-      return pattern.name == value.name
-   } else if pattern.kind == EXPR_VAR {
-      let bound_value Expr
-      if pattern.name == "_" {
+assert COUNT_NODES == 11
+fn pattern_match(pattern int, value int, bindings *Bindings) bool {
+   if nodes[pattern].kind == NODE_SYM && nodes[value].kind == NODE_SYM {
+      return nodes[pattern].token.str == nodes[value].token.str
+   } else if nodes[pattern].kind == NODE_VAR {
+      let bound_value int
+      if nodes[pattern].token.str == "_" {
          return true
-      } else if bindings_find(bindings, pattern.name, &bound_value) {
-         return bound_value == value
+      } else if bindings_find(bindings, nodes[pattern].token, &bound_value) {
+         return nodes[bound_value].token.str == nodes[value].token.str
       } else {
          let binding Binding
-         binding.name = pattern.name
+         binding.name = nodes[pattern].token
          binding.value = value
          *(array_push(&bindings.data as **char, &bindings.count, &bindings.capacity, sizeof(Binding)) as *Binding) = binding
          return true
       }
-   } else if pattern.kind == EXPR_FUN && value.kind == EXPR_FUN {
-      if pattern.name == value.name && pattern.args_count == value.args_count {
-         for let i = 0, i < pattern.args_count, i += 1 {
-            if !pattern_match((pattern.args as *Expr)[i], (value.args as *Expr)[i], bindings) {
+   } else if nodes[pattern].kind == NODE_FUN && nodes[value].kind == NODE_FUN {
+      if nodes[pattern].token.str == nodes[value].token.str && nodes[pattern].token.data == nodes[value].token.data {
+         let pattern_arg = nodes[pattern].nodes[NODE_FUN_ARGS]
+         let value_arg = nodes[value].nodes[NODE_FUN_ARGS]
+         for pattern_arg != 0 && value_arg != 0 {
+            if !pattern_match(pattern_arg, value_arg, bindings) {
                return false
             }
+            pattern_arg = nodes[pattern_arg].next
+            value_arg = nodes[value_arg].next
          }
-         return true
+         return pattern_arg == 0 && value_arg == 0
       }
+   } else if nodes[pattern].kind == NODE_BINARY && nodes[value].kind == NODE_BINARY {
+      return nodes[pattern].token.str == nodes[value].token.str && pattern_match(nodes[pattern].nodes[NODE_BINARY_LHS], nodes[value].nodes[NODE_BINARY_LHS], bindings) && pattern_match(nodes[pattern].nodes[NODE_BINARY_RHS], nodes[value].nodes[NODE_BINARY_RHS], bindings)
+   } else if nodes[pattern].kind == NODE_UNARY && nodes[value].kind == NODE_UNARY {
+      return nodes[pattern].token.str == nodes[value].token.str && pattern_match(nodes[pattern].nodes[NODE_UNARY_EXPR], nodes[value].nodes[NODE_UNARY_EXPR], bindings)
    }
    return false
 }
@@ -194,44 +125,32 @@ struct Resolution {
    state State
 }
 
-alias Strategy int
-const (
-   STRATEGY_APPLY_ALL
-   STRATEGY_APPLY_FIRST
-)
-
-fn strategy_matched(strategy Strategy) Resolution {
+fn strategy_matched(strategy int) Resolution {
    let resolution Resolution
-   match strategy {
-      STRATEGY_APPLY_ALL => {
-         resolution.action = ACTION_APPLY
-         resolution.state = STATE_BAIL
-      }
-      STRATEGY_APPLY_FIRST => {
-         resolution.action = ACTION_APPLY
-         resolution.state = STATE_HALT
-      }
+   if nodes[strategy].token.kind == TOKEN_ALL {
+      resolution.action = ACTION_APPLY
+      resolution.state = STATE_BAIL
+   } else if nodes[strategy].token.kind == TOKEN_FIRST {
+      resolution.action = ACTION_APPLY
+      resolution.state = STATE_HALT
+   } else {
+      assert false
    }
    return resolution
 }
 
-struct Rule {
-   head Expr
-   body Expr
-}
-
-assert COUNT_EXPRS == 3
-fn rule_apply(rule Rule, expr Expr, strategy Strategy, halt *bool) Expr {
+assert COUNT_NODES == 11
+fn rule_apply(rule int, expr int, strategy int, halt *bool) int {
    let bindings Bindings
    bindings.data = 0 as *Binding
    bindings.count = 0
    bindings.capacity = 0
 
-   if pattern_match(rule.head, expr, &bindings) {
+   if pattern_match(nodes[rule].nodes[NODE_RULE_HEAD], expr, &bindings) {
       let resolution = strategy_matched(strategy)
-      let new_expr Expr
+      let new_expr int
       match resolution.action {
-         ACTION_APPLY => new_expr = bindings_substitute(&bindings, rule.body)
+         ACTION_APPLY => new_expr = bindings_substitute(&bindings, nodes[rule].nodes[NODE_RULE_BODY])
          ACTION_SKIP => new_expr = expr
       }
       match resolution.state {
@@ -246,88 +165,53 @@ fn rule_apply(rule Rule, expr Expr, strategy Strategy, halt *bool) Expr {
          }
       }
    } else {
-      match expr.kind {
-         EXPR_SYM, EXPR_VAR => {
+      match nodes[expr].kind {
+         NODE_SYM, NODE_VAR => {
             *halt = false
             return expr
          }
-         EXPR_FUN => {
-            let new_fun = expr_fun(expr.name)
+         NODE_FUN => {
             let halt_args = false
-            for let i = 0, i < expr.args_count, i += 1 {
+            let new_fun = node_new(NODE_FUN, nodes[expr].token)
+            let new_args = &nodes[new_fun].nodes[NODE_FUN_ARGS]
+            for let arg = nodes[expr].nodes[NODE_FUN_ARGS], arg != 0, arg = nodes[arg].next {
                if halt_args {
-                  &new_fun << expr.args[i]
+                  new_args = node_list_push(new_args, arg)
                } else {
-                  &new_fun << rule_apply(rule, (expr.args as *Expr)[i], strategy, &halt_args)
+                  new_args = node_list_push(new_args, rule_apply(rule, arg, strategy, &halt_args))
                }
             }
             *halt = false
             return new_fun
          }
+         NODE_BINARY => {
+            nodes[expr].nodes[NODE_BINARY_LHS] = rule_apply(rule, nodes[expr].nodes[NODE_BINARY_LHS], strategy, halt)
+            if *halt { return expr }
+            nodes[expr].nodes[NODE_BINARY_RHS] = rule_apply(rule, nodes[expr].nodes[NODE_BINARY_RHS], strategy, halt)
+            return expr
+         }
+         NODE_UNARY => {
+            nodes[expr].nodes[NODE_UNARY_EXPR] = rule_apply(rule, nodes[expr].nodes[NODE_UNARY_EXPR], strategy, halt)
+            return expr
+         }
       }
    }
    assert false
-   let expr Expr return expr
-}
-
-fn [<<](file *File, rule Rule) *File {
-   file << rule.head << " = " << rule.body
-   return file
-}
-
-assert COUNT_EXPRS == 3
-fn parse_expr(result *Expr) bool {
-   let name Token
-   if !lexer_expect(TOKEN_IDENT, &name) { return false }
-   let peek_row bool
-   if !lexer_peek_row(&lexer.buffer, &peek_row) { return false }
-   if peek_row && lexer.buffer.kind == TOKEN_LPAREN {
-      lexer.peeked = false
-
-      let fun = expr_fun(name.str)
-      let read bool
-      if !lexer_read(TOKEN_RPAREN, &read) { return false }
-      if !read {
-         for true {
-            let expr Expr
-            if !parse_expr(&expr) { return false }
-            &fun << expr
-            let token Token
-            if !lexer_either(TOKEN_COMMA, TOKEN_RPAREN, &token) { return false }
-            if token.kind == TOKEN_RPAREN {
-               break
-            }
-         }
-      }
-      *result = fun
-      return true
-   }
-   *result = expr_sym_or_var(name.str)
-   return true
-}
-
-fn parse_rule(result *Rule) bool {
-   let rule Rule
-   if !parse_expr(&rule.head) { return false }
-   let eq_token Token
-   if !lexer_expect(TOKEN_EQ, &eq_token) { return false }
-   if !parse_expr(&rule.body) { return false }
-   *result = rule
-   return true
+   return 0
 }
 
 struct Named_Rule {
-   name Str
-   rule Rule
+   name Token
+   rule int
 }
 
 struct Context {
    rules *Named_Rule
    rules_count int
    rules_capacity int
-   curr_expr Expr
+   curr_expr int
    in_shape bool
-   shaping_history *Expr
+   shaping_history *int
    shaping_history_count int
    shaping_history_capacity int
 }
@@ -337,16 +221,17 @@ fn context_new() Context {
    context.rules = 0 as *Named_Rule
    context.rules_count = 0
    context.rules_capacity = 0
+   context.curr_expr = 0
    context.in_shape = false
-   context.shaping_history = 0 as *Expr
+   context.shaping_history = 0 as *int
    context.shaping_history_count = 0
    context.shaping_history_capacity = 0
    return context
 }
 
-fn context_rules_find(context *Context, name Str, rule *Rule) bool {
+fn context_rules_find(context *Context, name Token, rule *int) bool {
    for let i = 0, i < context.rules_count, i += 1 {
-      if context.rules[i].name == name {
+      if context.rules[i].name.str == name.str {
          *rule = context.rules[i].rule
          return true
       }
@@ -355,12 +240,12 @@ fn context_rules_find(context *Context, name Str, rule *Rule) bool {
 }
 
 fn context_process_command(context *Context) bool {
-   let token Token
-   if !lexer_next(&token) { return false }
+   let stmt int
+   if !parse_stmt(false, &stmt) { return false }
 
    if in_repl {
-      match token.kind {
-         TOKEN_UNDO => {
+      match nodes[stmt].kind {
+         NODE_UNDO => {
             if !context.in_shape {
                &stderr << "error: no shaping in place\n"
                return false
@@ -368,85 +253,62 @@ fn context_process_command(context *Context) bool {
             if context.shaping_history_count > 0 {
                context.shaping_history_count -= 1
                context.curr_expr = context.shaping_history[context.shaping_history_count]
-               &stdout << " => " << context.shaping_history[context.shaping_history_count] << "\n"
+               &stdout << " => " << nodes[context.curr_expr] << "\n"
             } else {
                &stderr << "error: no history\n"
                return false
             }
             return true
          }
-         TOKEN_QUIT => exit(0)
+         NODE_QUIT => exit(0)
       }
    }
 
-   match token.kind {
-      TOKEN_RULE => {
-         let name Token
-         if !lexer_expect(TOKEN_IDENT, &name) { return false }
-         let existing_rule Rule
-         if context_rules_find(context, name.str, &existing_rule) {
+   match nodes[stmt].kind {
+      NODE_RULE => {
+         let name = nodes[nodes[stmt].nodes[NODE_RULE_NAME]].token
+         let existing_rule int
+         if context_rules_find(context, name, &existing_rule) {
             &stderr << name.pos << "error: redefinition of existing rule '" << name.str << "'\n"
             return false
          }
-         let rule Rule
-         if !parse_expr(&rule.head) { return false }
-         let eq_token Token
-         if !lexer_expect(TOKEN_EQ, &eq_token) { return false }
-         if !parse_expr(&rule.body) { return false }
          let named_rule Named_Rule
-         named_rule.name = name.str
-         named_rule.rule = rule
+         named_rule.name = name
+         named_rule.rule = stmt
          *(array_push(&context.rules as **char, &context.rules_count, &context.rules_capacity, sizeof(Named_Rule)) as *Named_Rule) = named_rule
       }
-      TOKEN_SHAPE => {
+      NODE_SHAPE => {
          if context.in_shape {
             &stderr << "error: already shaping an expression\n"
             return false
          }
-         let new_expr Expr
-         if !parse_expr(&new_expr) { return false }
-         &stdout << " => " << new_expr << "\n"
-         context.curr_expr = new_expr
+         let expr = nodes[stmt].nodes[NODE_SHAPE_EXPR]
+         &stdout << " => " << nodes[expr] << "\n"
+         context.curr_expr = expr
          context.in_shape = true
       }
-      TOKEN_APPLY => {
+      NODE_APPLY => {
          if !context.in_shape {
             &stdout << "error: no shaping in place\n"
             return false
          }
-         let token Token
-         if !lexer_peek(&token) { return false }
-         let strategy = -1
-         match token.kind {
-            TOKEN_ALL => strategy = STRATEGY_APPLY_ALL
-            TOKEN_FIRST => strategy = STRATEGY_APPLY_FIRST
-         }
-         if strategy >= 0 {
-            if !lexer_next(&token) { return false }
-         } else {
-            strategy = STRATEGY_APPLY_ALL
-         }
-         if !lexer_either(TOKEN_IDENT, TOKEN_RULE, &token) { return false }
-         let rule Rule
-         match token.kind {
-            TOKEN_IDENT => {
-               if !context_rules_find(context, token.str, &rule) {
-                  &stderr << "error: rule '" << token.str << "' does not exist\n"
+         let rule int
+         match nodes[nodes[stmt].nodes[NODE_APPLY_RULE]].kind {
+            NODE_RULE => rule = nodes[stmt].nodes[NODE_APPLY_RULE]
+            NODE_SYM => {
+               if !context_rules_find(context, nodes[nodes[stmt].nodes[NODE_APPLY_RULE]].token, &rule) {
+                  &stderr << "error: rule '" << nodes[nodes[stmt].nodes[NODE_APPLY_RULE]].token.str << "' does not exist\n"
                   return false
                }
             }
-            TOKEN_RULE => {
-               if !parse_rule(&rule) { return false }
-            }
          }
-         *(array_push(&context.shaping_history as **char, &context.shaping_history_count, &context.shaping_history_capacity, sizeof(Expr)) as *Expr) = context.curr_expr
-         let new_expr Expr
+         *(array_push(&context.shaping_history as **char, &context.shaping_history_count, &context.shaping_history_capacity, sizeof(int)) as *int) = context.curr_expr
          let halt bool
-         new_expr = rule_apply(rule, context.curr_expr, strategy, &halt)
-         &stdout << " => " << new_expr << "\n"
-         context.curr_expr = new_expr
+         let expr = rule_apply(rule, context.curr_expr, nodes[stmt].nodes[NODE_APPLY_STRATEGY], &halt)
+         &stdout << " => " << nodes[expr] << "\n"
+         context.curr_expr = expr
       }
-      TOKEN_DONE => {
+      NODE_DONE => {
          if !context.in_shape {
             &stdout << "error: no shaping in place\n"
             return false
@@ -455,7 +317,7 @@ fn context_process_command(context *Context) bool {
          context.shaping_history_count = 0
       }
       else => {
-         &stderr << token.pos << "error: expected command, got " << str_from_token_kind(token.kind) << "\n"
+         &stderr << nodes[stmt].token.pos << "error: expected command, got " << nodes[stmt].token << "\n"
          return false
       }
    }

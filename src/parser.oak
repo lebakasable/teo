@@ -1,0 +1,265 @@
+use std.arena
+use src.lexer
+
+alias Node_Kind int
+const (
+   NODE_SYM
+   NODE_VAR
+   NODE_FUN
+   NODE_UNARY
+   NODE_BINARY
+
+   NODE_RULE
+   NODE_SHAPE
+   NODE_APPLY
+   NODE_DONE
+   NODE_UNDO
+   NODE_QUIT
+   COUNT_NODES
+)
+
+const NODE_FUN_ARGS = 0
+
+const NODE_UNARY_EXPR = 0
+
+const NODE_BINARY_LHS = 0
+const NODE_BINARY_RHS = 1
+
+const NODE_RULE_NAME = 0
+const NODE_RULE_HEAD = 1
+const NODE_RULE_BODY = 2
+
+const NODE_SHAPE_EXPR = 0
+
+const NODE_APPLY_STRATEGY = 0
+const NODE_APPLY_RULE = 1
+
+struct Node {
+   kind Node_Kind
+   token Token
+
+   nodes [3]Node_Kind
+   next int
+}
+
+const NODES_CAP = 16000
+let nodes [NODES_CAP]Node
+let nodes_count int
+
+assert COUNT_NODES == 11
+fn [<<](f *File, node Node) *File {
+   match node.kind {
+      NODE_SYM, NODE_VAR => f << node.token.str
+      NODE_FUN => {
+         f << node.token.str << "("
+         let i = 0
+         for let arg = node.nodes[NODE_FUN_ARGS], arg != 0, arg = nodes[arg].next {
+            if i > 0 { f << ", " }
+            f << nodes[arg]
+            i += 1
+         }
+         f << ")"
+      }
+      NODE_BINARY => f << nodes[node.nodes[NODE_BINARY_LHS]] << " " << node.token.str << " " << nodes[node.nodes[NODE_BINARY_RHS]]
+      NODE_UNARY => f << node.token.str << nodes[node.nodes[NODE_UNARY_EXPR]]
+      else => assert false
+   }
+   return f
+}
+
+fn node_new(kind Node_Kind, token Token) int {
+   assert nodes_count < NODES_CAP
+   nodes[nodes_count].kind = kind
+   nodes[nodes_count].token = token
+   nodes_count += 1
+   return nodes_count - 1
+}
+
+fn node_list_push(list *int, node int) *int {
+   if *list != 0 {
+      list = &nodes[*list].next
+   }
+
+   *list = node
+   return list
+}
+
+fn node_list_find(list int, node int) bool {
+   for list != 0 {
+      if nodes[list].token.str == nodes[node].token.str {
+         nodes[node].token.data = list
+         return true
+      }
+      list = nodes[list].next
+   }
+   return false
+}
+
+alias Power int
+const (
+   POWER_NIL
+   POWER_SET
+   POWER_ADD
+   POWER_MUL
+   POWER_POW
+   POWER_PRE
+)
+
+assert COUNT_TOKENS == 19
+fn power_from_token_kind(kind Token_Kind) Power {
+   match kind {
+      TOKEN_ADD, TOKEN_SUB => return POWER_ADD
+      TOKEN_MUL, TOKEN_DIV => return POWER_MUL
+      TOKEN_POW => return POWER_POW
+   }
+   return POWER_NIL
+}
+
+fn error_unexpected(token Token) {
+   &stderr << token.pos << "error: unexpected " << str_from_token_kind(token.kind) << "\n"
+}
+
+assert COUNT_TOKENS == 19
+fn parse_expr(mbp int, result *int) bool {
+   let node int
+   let token Token
+   if !lexer_next(&token) { return false }
+
+   match token.kind {
+      TOKEN_LPAREN => {
+         if !parse_expr(POWER_SET, &node) { return false }
+         let rparen_token Token
+         if !lexer_expect(TOKEN_RPAREN, &rparen_token) { return false }
+      }
+
+      TOKEN_IDENT => {
+         let peek_row bool
+         if !lexer_peek_row(&lexer.buffer, &peek_row) { return false }
+         if peek_row && lexer.buffer.kind == TOKEN_LPAREN {
+            lexer.peeked = false
+            node = node_new(NODE_FUN, token)
+
+            nodes[node].token.data = 0
+            let read bool
+            if !lexer_read(TOKEN_RPAREN, &read) { return false }
+            if !read {
+               let args = &nodes[node].nodes[NODE_FUN_ARGS]
+               for true {
+                  let parsed int
+                  if !parse_expr(POWER_SET, &parsed) { return false }
+                  args = node_list_push(args, parsed)
+                  if !lexer_either(TOKEN_COMMA, TOKEN_RPAREN, &token) { return false }
+                  nodes[node].token.data += 1
+                  if (token.kind == TOKEN_RPAREN) {
+                     break
+                  }
+               }
+            }
+         } else {
+            if (token.str.data[0] >= 'A' && token.str.data[0] <= 'Z') || token.str.data[0] == '_' {
+               node = node_new(NODE_VAR, token)
+            } else {
+               node = node_new(NODE_SYM, token)
+            }
+         }
+      }
+
+      TOKEN_SUB => {
+         node = node_new(NODE_UNARY, token)
+         if !parse_expr(POWER_PRE, &nodes[node].nodes[NODE_UNARY_EXPR]) { return false }
+      }
+
+      else => {
+         error_unexpected(token)
+         return false
+      }
+   }
+
+   let peek_row bool
+   if !lexer_peek_row(&token, &peek_row) { return false }
+   for peek_row {
+      let lbp = power_from_token_kind(token.kind)
+      if lbp <= mbp {
+         break
+      }
+      lexer.peeked = false
+
+      let binary = node_new(NODE_BINARY, token)
+      nodes[binary].nodes[NODE_BINARY_LHS] = node
+      if !parse_expr(lbp, &nodes[binary].nodes[NODE_BINARY_RHS]) { return false }
+      node = binary
+      if !lexer_peek_row(&token, &peek_row) { return false }
+   }
+
+   *result = node
+   return true
+}
+
+fn is_operator_function_token_kind(kind Token_Kind) bool {
+   let power = power_from_token_kind(kind)
+   return power >= POWER_ADD && power <= POWER_POW
+}
+
+assert COUNT_TOKENS == 19
+fn parse_stmt(loop bool, result *int) bool {
+   let node int
+   let token Token
+   if !lexer_next(&token) { return false }
+
+   match token.kind {
+      TOKEN_RULE => {
+         node = node_new(NODE_RULE, token)
+         let name Token
+         if !lexer_expect(TOKEN_IDENT, &name) { return false }
+         nodes[node].nodes[NODE_RULE_NAME] = node_new(NODE_SYM, name)
+         if !parse_expr(POWER_SET, &nodes[node].nodes[NODE_RULE_HEAD]) { return false }
+         let eq_token Token
+         if !lexer_expect(TOKEN_EQ, &eq_token) { return false }
+         if !parse_expr(POWER_SET, &nodes[node].nodes[NODE_RULE_BODY]) { return false }
+      }
+
+      TOKEN_SHAPE => {
+         node = node_new(NODE_SHAPE, token)
+         if !parse_expr(POWER_SET, &nodes[node].nodes[NODE_SHAPE_EXPR]) { return false }
+      }
+
+      TOKEN_APPLY => {
+         node = node_new(NODE_APPLY, token)
+         let strategy Token
+         if !lexer_peek(&strategy) { return false }
+         match strategy.kind {
+            TOKEN_ALL, TOKEN_FIRST => {
+               if !lexer_next(&strategy) { return false }
+            }
+            else => strategy.kind = TOKEN_ALL
+         }
+         nodes[node].nodes[NODE_APPLY_STRATEGY] = node_new(NODE_SYM, strategy)
+         let rule Token
+         if !lexer_peek(&rule) { return false }
+         if rule.kind == TOKEN_RULE {
+            if !lexer_next(&rule) { return false }
+            let rule = node_new(NODE_RULE, rule)
+            if !parse_expr(POWER_SET, &nodes[rule].nodes[NODE_RULE_HEAD]) { return false }
+            let eq_token Token
+            if !lexer_expect(TOKEN_EQ, &eq_token) { return false }
+            if !parse_expr(POWER_SET, &nodes[rule].nodes[NODE_RULE_BODY]) { return false }
+            nodes[node].nodes[NODE_APPLY_RULE] = rule
+         } else {
+            if !lexer_expect(TOKEN_IDENT, &rule) { return false }
+            nodes[node].nodes[NODE_APPLY_RULE] = node_new(NODE_SYM, rule)
+         }
+      }
+
+      TOKEN_DONE => node = node_new(NODE_DONE, token)
+      TOKEN_UNDO => node = node_new(NODE_UNDO, token)
+      TOKEN_QUIT => node = node_new(NODE_QUIT, token)
+
+      else => {
+         lexer_buffer(token)
+         if !parse_expr(POWER_NIL, &node) { return false }
+      }
+   }
+
+   *result = node
+   return true
+}

@@ -35,10 +35,15 @@ const (
    TOKEN_QUIT
    TOKEN_ALL
    TOKEN_FIRST
+   TOKEN_ADD
+   TOKEN_SUB
+   TOKEN_MUL
+   TOKEN_DIV
+   TOKEN_POW
    COUNT_TOKENS
 )
 
-assert COUNT_TOKENS == 14
+assert COUNT_TOKENS == 19
 fn str_from_token_kind(kind Token_Kind) Str {
    match kind {
       TOKEN_EOF => return "end of file"
@@ -55,6 +60,11 @@ fn str_from_token_kind(kind Token_Kind) Str {
       TOKEN_QUIT => return "command 'quit'"
       TOKEN_ALL => return "strategy 'all'"
       TOKEN_FIRST => return "strategy 'first'"
+      TOKEN_ADD => return "'+'"
+      TOKEN_SUB => return "'-'"
+      TOKEN_MUL => return "'*'"
+      TOKEN_DIV => return "'/'"
+      TOKEN_POW => return "'^'"
       else => assert false
    }
    return ""
@@ -65,6 +75,16 @@ struct Token {
    data int
    pos Pos
    str Str
+}
+
+assert COUNT_TOKENS == 19
+fn [<<](file *File, token Token) *File {
+   if token.kind == TOKEN_IDENT {
+      file << token.str
+   } else {
+      file << str_from_token_kind(token.kind)
+   }
+   return file
 }
 
 struct Lexer {
@@ -137,7 +157,7 @@ fn error_invalid(name Str) {
    &stderr << lexer.pos << "error: invalid " << name << " '" << lexer.str.data[-1] << "'\n"
 }
 
-assert COUNT_TOKENS == 14
+assert COUNT_TOKENS == 19
 fn lexer_next(result *Token) bool {
    if lexer.peeked {
       lexer.peeked = false
@@ -206,6 +226,11 @@ fn lexer_next(result *Token) bool {
          '(' => token.kind = TOKEN_LPAREN
          ')' => token.kind = TOKEN_RPAREN
          '=' => token.kind = TOKEN_EQ
+         '+' => token.kind = TOKEN_ADD
+         '-' => token.kind = TOKEN_SUB
+         '*' => token.kind = TOKEN_MUL
+         '/' => token.kind = TOKEN_DIV
+         '^' => token.kind = TOKEN_POW
          else => {
             lexer.pos = token.pos
             error_invalid("character")
